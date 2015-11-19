@@ -108,8 +108,10 @@ public class PCFGParserTester {
       System.out.print("Building grammar ... ");
       Grammar grammar = new Grammar(annotatedTrainTrees);
       System.out.println("done. (" + grammar.getStates().size() + " states)");
-//      UnaryClosure uc = new UnaryClosure(grammar);
-//      System.out.println(uc);
+
+      // What is unary closure?
+      UnaryClosure uc = new UnaryClosure(grammar);
+      System.out.println(uc);
 
       System.out.print("Discarding grammar and setting up a baseline parser ... ");
       lexicon = new Lexicon(annotatedTrainTrees);
