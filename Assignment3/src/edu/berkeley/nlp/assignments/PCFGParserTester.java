@@ -147,6 +147,87 @@ public class PCFGParserTester {
     }
   }
 
+  static class PreterminalTag{
+    public String Tag;
+    public Double Probability;
+    public PreterminalTag(String tag, double probability){
+      Tag = tag;
+      Probability = probability;
+    }
+  }
+
+  /**
+   * Baseline parser (though not a baseline I've ever seen before).  Tags the sentence using the baseline tagging
+   * method, then either retrieves a known parse of that tag sequence, or builds a right-branching parse for unknown tag
+   * sequences.
+   */
+  static class CKYParser implements Parser {
+    Lexicon lexicon;
+    Grammar grammar;
+    UnaryClosure unaryClosures;
+
+    public Tree<String> getBestParse(List<String> sentence) {
+      Tree<String> annotatedBestParse = null;
+
+      // TODO:Actually do something here
+      List<List<PreterminalTag>> preterminalTags = getBaselineTagging(sentence);
+
+      return TreeAnnotations.unAnnotateTree(annotatedBestParse);
+    }
+
+    private List<List<PreterminalTag>> getBaselineTagging(List<String> sentence) {
+      List<List<PreterminalTag>> preterminalTags = new ArrayList<List<PreterminalTag>>();
+      for (String word : sentence) {
+        List<PreterminalTag> preterminalTagsForWord = getPreterminalTags(word);
+        preterminalTags.add(preterminalTagsForWord);
+      }
+      // Todo - unaries using unary closures!
+      return preterminalTags;
+    }
+
+    private List<PreterminalTag> getPreterminalTags(String word) {
+      List<PreterminalTag> preterminalTags = new ArrayList<PreterminalTag>();
+      for (String tag : lexicon.getAllTags()) {
+        double score = lexicon.scoreTagging(word, tag);
+        if (score > 0) {
+          preterminalTags.add(new PreterminalTag(tag, score));
+        }
+      }
+      return preterminalTags;
+    }
+
+    public CKYParser(List<Tree<String>> trainTrees) {
+
+      System.out.print("Annotating / binarizing training trees ... ");
+      List<Tree<String>> annotatedTrainTrees = annotateTrees(trainTrees);
+      System.out.println("done.");
+
+      System.out.print("Building grammar ... ");
+      grammar = new Grammar(annotatedTrainTrees);
+      System.out.println("done. (" + grammar.getStates().size() + " states)");
+
+      // Unary closures is what we'll check to get unary transitions
+      unaryClosures = new UnaryClosure(grammar);
+      System.out.println(unaryClosures);
+
+      System.out.print("Keeping grammar and setting up a CKY parser ... ");
+      lexicon = new Lexicon(annotatedTrainTrees);
+
+      // Initialize dictionary variables
+      // TODO I will need some variables here, of course?
+      System.out.println("done initializing parser.");
+    }
+
+    // This will binarize all trees
+    private List<Tree<String>> annotateTrees(List<Tree<String>> trees) {
+      List<Tree<String>> annotatedTrees = new ArrayList<Tree<String>>();
+      for (Tree<String> tree : trees) {
+        annotatedTrees.add(TreeAnnotations.annotateTree(tree));
+      }
+      return annotatedTrees;
+    }
+  }
+
   /**
    * Class which contains code for annotating and binarizing trees for the parser's use, and debinarizing and
    * unannotating them for scoring.
@@ -672,8 +753,8 @@ public class PCFGParserTester {
       verbose = false;
     }
 
-    System.out.print("Loading training trees (sections 2-21) ... ");
-    List<Tree<String>> trainTrees = readTrees(basePath, 200, 2199, maxTrainLength);
+    System.out.print("Loading training trees (sections 2-10) ... ");
+    List<Tree<String>> trainTrees = readTrees(basePath, 200, 999, maxTrainLength);
     System.out.println("done. (" + trainTrees.size() + " trees)");
     List<Tree<String>> testTrees = null;
     if (testMode.equalsIgnoreCase("validate")) {
@@ -685,8 +766,7 @@ public class PCFGParserTester {
     }
     System.out.println("done. (" + testTrees.size() + " trees)");
 
-    // TODO : Build a better parser!
-    Parser parser = new BaselineParser(trainTrees);
+    Parser parser = new CKYParser(trainTrees);
 
     testParser(parser, testTrees, verbose);
   }
