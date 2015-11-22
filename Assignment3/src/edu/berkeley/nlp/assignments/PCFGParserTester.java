@@ -148,11 +148,56 @@ public class PCFGParserTester {
   }
 
   static class PreterminalTag{
+    public boolean IsUnary = false;
     public String Tag;
     public Double Probability;
     public PreterminalTag(String tag, double probability){
       Tag = tag;
       Probability = probability;
+    }
+  }
+
+  static class TagWithPosition{
+    public String Tag;
+    public Integer Position;
+    public TagWithPosition(String tag, Integer position){
+      Tag = tag;
+      Position = position;
+    }
+  }
+
+  static class Binary{
+    public String ResultingTag;
+    public TagWithPosition TagLeft;
+    public TagWithPosition TagRight;
+    public Double Probability;
+    public List<String> UnaryHistory;
+    public Binary(String resultingTag, TagWithPosition tagLeft, TagWithPosition tagRight, double probability){
+      ResultingTag = resultingTag;
+      TagLeft = tagLeft;
+      TagRight = tagRight;
+      Probability = probability;
+    }
+  }
+
+  static class Cell{
+    public Cell(){
+      BackPointers = new HashMap<String, String>();
+    }
+    public Map<String, String> BackPointers;
+  }
+
+  static class PreterminalCell extends Cell{
+    public HashMap<String, PreterminalTag> Preterminals;
+    public PreterminalCell(HashMap<String, PreterminalTag> preterminals){
+      Preterminals = preterminals;
+    }
+  }
+
+  static class BinaryCell extends Cell{
+    public Map<String, Binary> Binaries;
+    public BinaryCell(Map<String, Binary> binaries){
+      Binaries = binaries;
     }
   }
 
@@ -167,30 +212,94 @@ public class PCFGParserTester {
     UnaryClosure unaryClosures;
 
     public Tree<String> getBestParse(List<String> sentence) {
+      System.out.println("GetBestParse for " + sentence.size() + " word sentence");
+
       Tree<String> annotatedBestParse = null;
 
-      // TODO:Actually do something here
-      List<List<PreterminalTag>> preterminalTags = getBaselineTagging(sentence);
+      // First row of the tree (bottom up)
+      // Build the preterminal tags
+      List<PreterminalCell> preterminalCells = getBaselineTagging(sentence);
+      // Do unary rules to find extra possible tags
+      AddUnaryRulesToPreterminalCells(preterminalCells);
+
+      Cell[][] bottomUpTree = new Cell[sentence.size()][sentence.size()];
+      int counterForFillingPreterminalCells = 0;
+      for(PreterminalCell preterminalCell : preterminalCells){
+        bottomUpTree[counterForFillingPreterminalCells][counterForFillingPreterminalCells] = preterminalCell;
+      }
+
+      // Do binary linking
+      int cellLevelCount = sentence.size();
+      for(int cellLevelIndex = 1; cellLevelIndex < cellLevelCount; cellLevelIndex++){
+        // For a specific level, traverse all the cells
+        int cellCountForLevel = sentence.size() - cellLevelIndex;
+        for(int cellIndex = 0; cellIndex < cellCountForLevel; cellIndex++){
+          // On each cell we should find all possible combinations
+          int cellRow = cellIndex;
+          int cellColumn = cellLevelIndex + cellIndex;
+          for(int split = 0; split < cellLevelIndex; split++){
+            int leftCellRow = cellRow;
+            int leftCellColumn = cellColumn + split - cellLevelIndex;
+            Cell leftCell = bottomUpTree[leftCellRow][leftCellColumn];
+            int rightCellRow = cellRow + split + 1;
+            int rightCellColumn = cellColumn;
+            Cell rightCell = bottomUpTree[rightCellRow][rightCellColumn];
+
+            System.out.println("Left {" + leftCellRow + ", " + leftCellColumn + "} Right {" + rightCellRow + ", " + rightCellColumn + "}");
+          }
+        }
+      }
 
       return TreeAnnotations.unAnnotateTree(annotatedBestParse);
     }
 
-    private List<List<PreterminalTag>> getBaselineTagging(List<String> sentence) {
-      List<List<PreterminalTag>> preterminalTags = new ArrayList<List<PreterminalTag>>();
-      for (String word : sentence) {
-        List<PreterminalTag> preterminalTagsForWord = getPreterminalTags(word);
-        preterminalTags.add(preterminalTagsForWord);
+    private void AddUnaryRulesToPreterminalCells(List<PreterminalCell> preterminalCells) {
+      System.out.println("Building unaries for first level");
+
+      for(PreterminalCell preterminalCell : preterminalCells){
+        boolean added = true;
+        while(added){
+          added = false;
+          Set<String> set = new TreeSet<String>(preterminalCell.Preterminals.keySet());
+          for(String preteminalTagKey : set){
+            PreterminalTag preterminalTag = preterminalCell.Preterminals.get(preteminalTagKey);
+            List<UnaryRule> localClosures = unaryClosures.getClosedUnaryRulesByChild(preterminalTag.Tag);
+            for(UnaryRule localClosure : localClosures){
+              double probability = localClosure.getScore() * preterminalTag.Probability;
+              double existingProbability = 0;
+              PreterminalTag existingPreterminal = preterminalCell.Preterminals.getOrDefault(localClosure.parent, null);
+              if (existingPreterminal != null){
+                existingProbability = existingPreterminal.Probability;
+              }
+              if (probability > existingProbability){
+                // Add it and store backpointer
+                added = true;
+                PreterminalTag newPreterminal = new PreterminalTag(localClosure.parent, probability);
+                preterminalCell.BackPointers.put(localClosure.parent, localClosure.child);
+                preterminalCell.Preterminals.put(localClosure.parent, newPreterminal);
+              }
+            }
+          }
+        }
       }
-      // Todo - unaries using unary closures!
-      return preterminalTags;
     }
 
-    private List<PreterminalTag> getPreterminalTags(String word) {
-      List<PreterminalTag> preterminalTags = new ArrayList<PreterminalTag>();
+    private List<PreterminalCell> getBaselineTagging(List<String> sentence) {
+      List<PreterminalCell> preterminalCells = new ArrayList<PreterminalCell>();
+      for (String word : sentence) {
+        HashMap<String, PreterminalTag> preterminalTagsForWord = getPreterminalTags(word);
+        preterminalCells.add(new PreterminalCell(preterminalTagsForWord));
+      }
+      // Todo - unaries using unary closures!
+      return preterminalCells;
+    }
+
+    private HashMap<String, PreterminalTag> getPreterminalTags(String word) {
+      HashMap<String, PreterminalTag> preterminalTags = new HashMap<String, PreterminalTag>();
       for (String tag : lexicon.getAllTags()) {
         double score = lexicon.scoreTagging(word, tag);
         if (score > 0) {
-          preterminalTags.add(new PreterminalTag(tag, score));
+          preterminalTags.put(tag, new PreterminalTag(tag, score));
         }
       }
       return preterminalTags;
