@@ -6,6 +6,7 @@ import edu.berkeley.nlp.ling.Trees;
 import edu.berkeley.nlp.parser.EnglishPennTreebankParseEvaluator;
 import edu.berkeley.nlp.util.*;
 
+import java.security.InvalidAlgorithmParameterException;
 import java.util.*;
 
 /**
@@ -109,10 +110,6 @@ public class PCFGParserTester {
       Grammar grammar = new Grammar(annotatedTrainTrees);
       System.out.println("done. (" + grammar.getStates().size() + " states)");
 
-      // What is unary closure?
-      UnaryClosure uc = new UnaryClosure(grammar);
-      System.out.println(uc);
-
       System.out.print("Discarding grammar and setting up a baseline parser ... ");
       lexicon = new Lexicon(annotatedTrainTrees);
       knownParses = new CounterMap<List<String>, Tree<String>>();
@@ -151,9 +148,11 @@ public class PCFGParserTester {
     public boolean IsUnary = false;
     public String Tag;
     public Double Probability;
-    public PreterminalTag(String tag, double probability){
+    public String Word;
+    public PreterminalTag(String tag, double probability, String word){
       Tag = tag;
       Probability = probability;
+      Word = word;
     }
   }
 
@@ -229,7 +228,7 @@ public class PCFGParserTester {
     @Override
     public void AddUnaryClosure(String parent, double probability) {
       // Add a fake preterminal
-      PreterminalTag fakePreterminal = new PreterminalTag(parent, probability);
+      PreterminalTag fakePreterminal = new PreterminalTag(parent, probability, null);
       fakePreterminal.IsUnary = true;
       Preterminals.put(parent, fakePreterminal);
     }
@@ -278,8 +277,6 @@ public class PCFGParserTester {
     public Tree<String> getBestParse(List<String> sentence) {
       System.out.println("GetBestParse for " + sentence.size() + " word sentence");
 
-      Tree<String> annotatedBestParse = null;
-
       // First row of the tree (bottom up)
       // Build the preterminal tags
       List<PreterminalCell> preterminalCells = getBaselineTagging(sentence);
@@ -325,7 +322,92 @@ public class PCFGParserTester {
         }
       }
 
+      // Pick the biggest "S" at the beginning
+      int expectedBinaryLevels = sentence.size() - 1;
+      BinaryCell lastCell = (BinaryCell)bottomUpTree[0][expectedBinaryLevels];
+      Tree<String> annotatedBestParse = new Tree<String>("ROOT", null);
+      if (lastCell.GetScore("S") > 0){
+        // If we're here, it means we'll be able to build a tree. Just watch out for unaries and for the final preterminal transition
+        Binary binary = lastCell.Binaries.get("S");
+        Tree<String> currentTree = annotatedBestParse;
+        AddBinaryToTree(lastCell, binary, currentTree, bottomUpTree);
+      } else {
+        // This means something went wront and we weren't able to find any viable parse for this tree
+        throw new EmptyStackException();
+      }
+
       return TreeAnnotations.unAnnotateTree(annotatedBestParse);
+    }
+
+    private void AddBinaryToTree(BinaryCell cell, Binary binary, Tree<String> currentTree, Cell[][] bottomUpTree) {
+      List<Tree<String>> currentChildren = new ArrayList<Tree<String>>();
+      currentTree.setChildren(currentChildren);
+
+      while (binary.IsUnary){
+        // Add as a unary - loop until we hit a non-unary
+        Tree<String> unaryTree = new Tree<String>(binary.ResultingTag);
+        currentChildren.add(unaryTree);
+        currentChildren = new ArrayList<Tree<String>>();
+        unaryTree.setChildren(currentChildren);
+        String realTag = cell.BackPointers.get(binary.ResultingTag);
+        binary = cell.Binaries.get(realTag);
+      }
+
+      // Now that it's not a unary, we can create a tree for the binary
+      Tree<String> binaryTreeLeft = new Tree<String>(binary.TagLeft.Tag);
+      Tree<String> binaryTreeRight = new Tree<String>(binary.TagLeft.Tag);
+      currentChildren.add(binaryTreeLeft);
+      currentChildren.add(binaryTreeRight);
+
+      // Look for the next cells and call concurrently
+      Cell leftCell = bottomUpTree[binary.TagLeft.TagPosition.Row][binary.TagLeft.TagPosition.Column];
+      Cell rightCell = bottomUpTree[binary.TagRight.TagPosition.Row][binary.TagRight.TagPosition.Column];
+
+      AddTagFromCellInTree(leftCell, binaryTreeLeft, bottomUpTree, binary.TagLeft.Tag);
+      AddTagFromCellInTree(rightCell, binaryTreeRight, bottomUpTree, binary.TagRight.Tag);
+    }
+
+    public static <T> T as(Class<T> t, Object o) {
+      return t.isInstance(o) ? t.cast(o) : null;
+    }
+
+    private void AddTagFromCellInTree(Cell cell, Tree<String> tree, Cell[][] bottomUpTree, String tag) {
+      BinaryCell binaryCell = as(BinaryCell.class, cell);
+      PreterminalCell preterminalCell = as(PreterminalCell.class, cell);
+
+      if (binaryCell != null){
+        Binary binary = binaryCell.Binaries.get(tag);
+        AddBinaryToTree(binaryCell, binary, tree, bottomUpTree);
+      }
+      else if (preterminalCell != null){
+        PreterminalTag preterminalTag = preterminalCell.Preterminals.get(tag);
+        AddPreterminalToTree(preterminalCell, tree, bottomUpTree, preterminalTag);
+      }
+    }
+
+    private void AddPreterminalToTree(PreterminalCell cell, Tree<String> tree, Cell[][] bottomUpTree, PreterminalTag preterminalTag) {
+      List<Tree<String>> currentChildren = new ArrayList<Tree<String>>();
+      tree.setChildren(currentChildren);
+
+      while (preterminalTag.IsUnary){
+        // Add as a unary - loop until we hit a non-unary
+        Tree<String> unaryTree = new Tree<String>(preterminalTag.Tag);
+        currentChildren.add(unaryTree);
+        currentChildren = new ArrayList<Tree<String>>();
+        unaryTree.setChildren(currentChildren);
+        String realTag = cell.BackPointers.get(preterminalTag.Tag);
+        preterminalTag = cell.Preterminals.get(realTag);
+      }
+
+      // Now that it's not a unary, we can create a tree for the preterminal
+      Tree<String> preterminalTree = new Tree<String>(preterminalTag.Tag);
+      currentChildren.add(preterminalTree);
+
+      // Add the terminal tree
+      Tree<String> terminalTree = new Tree<String>(preterminalTag.Word);
+      currentChildren = new ArrayList<Tree<String>>();
+      currentChildren.add(terminalTree);
+      preterminalTree.setChildren(currentChildren);
     }
 
     private void AddBinariesForCellCombination(Cell leftCell, Cell rightCell, HashMap<String, Binary> binariesForCell) {
@@ -402,7 +484,7 @@ public class PCFGParserTester {
       for (String tag : lexicon.getAllTags()) {
         double score = lexicon.scoreTagging(word, tag);
         if (score > 0) {
-          preterminalTags.put(tag, new PreterminalTag(tag, score));
+          preterminalTags.put(tag, new PreterminalTag(tag, score, word));
         }
       }
       return preterminalTags;
