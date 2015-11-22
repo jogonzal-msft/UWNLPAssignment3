@@ -180,6 +180,7 @@ public class PCFGParserTester {
     public TagWithPosition TagLeft;
     public TagWithPosition TagRight;
     public Double Probability;
+    public boolean IsUnary = false;
     public Binary(String resultingTag, TagWithPosition tagLeft, TagWithPosition tagRight, double probability){
       ResultingTag = resultingTag;
       TagLeft = tagLeft;
@@ -218,13 +219,19 @@ public class PCFGParserTester {
 
     @Override
     public double GetScore(String tag) {
-      return Preterminals.get(tag).Probability;
+      PreterminalTag preterminalTag = Preterminals.getOrDefault(tag, null);
+      if (preterminalTag != null){
+        return preterminalTag.Probability;
+      }
+      return 0;
     }
 
     @Override
     public void AddUnaryClosure(String parent, double probability) {
-      PreterminalTag newPreterminal = new PreterminalTag(parent, probability);
-      Preterminals.put(parent, newPreterminal);
+      // Add a fake preterminal
+      PreterminalTag fakePreterminal = new PreterminalTag(parent, probability);
+      fakePreterminal.IsUnary = true;
+      Preterminals.put(parent, fakePreterminal);
     }
   }
 
@@ -242,12 +249,19 @@ public class PCFGParserTester {
 
     @Override
     public double GetScore(String tag) {
-      return Binaries.get(tag).Probability;
+      Binary binary = Binaries.getOrDefault(tag, null);
+      if (binary != null){
+        return binary.Probability;
+      }
+      return 0;
     }
 
     @Override
     public void AddUnaryClosure(String parent, double probability) {
-      // TODO!
+      // Add a fake binary
+      Binary fakeBinary = new Binary(parent, null, null, probability);
+      fakeBinary.IsUnary = true;
+      Binaries.put(parent, fakeBinary);
     }
   }
 
@@ -276,6 +290,7 @@ public class PCFGParserTester {
       int counterForFillingPreterminalCells = 0;
       for(PreterminalCell preterminalCell : preterminalCells){
         bottomUpTree[counterForFillingPreterminalCells][counterForFillingPreterminalCells] = preterminalCell;
+        counterForFillingPreterminalCells++;
       }
 
       // Do binary linking
@@ -340,7 +355,7 @@ public class PCFGParserTester {
       }
     }
 
-    private void AddUnaryRulesToPreterminalCells(List<Cell> preterminalCells) {
+    private void AddUnaryRulesToPreterminalCells(List<PreterminalCell> preterminalCells) {
       System.out.println("Building unaries for first level");
 
       for(Cell cell : preterminalCells){
@@ -353,11 +368,11 @@ public class PCFGParserTester {
       while(added){
         added = false;
         Set<String> set = new TreeSet<String>(cell.GetTags());
-        for(String preteminalTagKey : set){
-          List<UnaryRule> localClosures = unaryClosures.getClosedUnaryRulesByChild(preteminalTagKey);
+        for(String tagKey : set){
+          List<UnaryRule> localClosures = unaryClosures.getClosedUnaryRulesByChild(tagKey);
           for(UnaryRule localClosure : localClosures){
-            double preterminalTagProbability = cell.GetScore(preteminalTagKey);
-            double probability = localClosure.getScore() * preterminalTagProbability;
+            double tagProbability = cell.GetScore(tagKey);
+            double probability = localClosure.getScore() * tagProbability;
             double existingProbability = cell.GetScore(localClosure.parent);
             if (probability > existingProbability){
               // Add it and store backpointer
