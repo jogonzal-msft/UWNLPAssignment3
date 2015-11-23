@@ -7,12 +7,12 @@ public class Main {
         Test<MockClass> test = new Test<MockClass>();
         test.main(new String[]{
                 "-test",
-                "-maxTrainLength", "40",
-                "-maxTestLength", "20",
+                "-maxTrainLength", "99",
+                "-maxTestLength", "40",
                 "-usestip",
                 "-quiet",
-                "-verticalmarkov",
-                "-horizontalmarkov"
+                "-horizontalmarkov",
+                "-verticalmarkov"
         });
     }
 }
