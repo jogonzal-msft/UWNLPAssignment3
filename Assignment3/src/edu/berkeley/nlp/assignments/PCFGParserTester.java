@@ -20,7 +20,7 @@ public class PCFGParserTester {
    * Parsers are required to map sentences to trees.  How a parser is constructed and trained is not specified.
    */
   static interface Parser {
-    Tree<String> getBestParse(List<String> sentence, boolean isSTree);
+    Tree<String> getBestParse(List<String> sentence, boolean isNotSTree);
   }
 
   /**
@@ -33,7 +33,7 @@ public class PCFGParserTester {
     CounterMap<Integer, String> spanToCategories;
     Lexicon lexicon;
 
-    public Tree<String> getBestParse(List<String> sentence, boolean isSTree) {
+    public Tree<String> getBestParse(List<String> sentence, boolean isNotSTree) {
       List<String> tags = getBaselineTagging(sentence);
       Tree<String> annotatedBestParse = null;
       if (knownParses.keySet().contains(tags)) {
@@ -274,7 +274,7 @@ public class PCFGParserTester {
     Grammar grammar;
     UnaryClosure unaryClosures;
 
-    public Tree<String> getBestParse(List<String> sentence, boolean isSTree) {
+    public Tree<String> getBestParse(List<String> sentence, boolean isNotSTree) {
       System.out.println("=====================================================================");
       System.out.println("GetBestParse for " + sentence.size() + " word sentence");
 
@@ -333,7 +333,7 @@ public class PCFGParserTester {
       PreterminalCell lastCellAsPreterminal = as(PreterminalCell.class, bottomUpTree[0][sentence.size() - 1]);
       if (lastCellAsBinaryCell != null){
         // Start with a binary
-        Binary binary = GetMainRootTagFromBinaryCell(lastCellAsBinaryCell, isSTree);
+        Binary binary = GetMainRootTagFromBinaryCell(lastCellAsBinaryCell, isNotSTree);
 
         // Build the beginning of the tree (always an S followed by something else
         Tree<String> sTree = new Tree<String>(binary.ResultingTag);
@@ -370,8 +370,8 @@ public class PCFGParserTester {
       return lastCellAsPreterminal.Preterminals.get(maxTag);
     }
 
-    private Binary GetMainRootTagFromBinaryCell(BinaryCell lastCell, boolean isSTree) {
-      if (isSTree){
+    private Binary GetMainRootTagFromBinaryCell(BinaryCell lastCell, boolean isNotSTree) {
+      if (!isNotSTree){
         // The test tree starts with S - get the S!
         if (lastCell.GetScore("S") > 0){
           return lastCell.Binaries.get("S");
@@ -1073,6 +1073,7 @@ public class PCFGParserTester {
     String testMode = "validate";
     int maxTrainLength = 1000;
     int maxTestLength = 40;
+    boolean useSTip = false;
 
     // Update defaults using command line specifications
     if (argMap.containsKey("-path")) {
@@ -1100,6 +1101,10 @@ public class PCFGParserTester {
       verbose = false;
     }
 
+    if (argMap.containsKey("-stip")) {
+      useSTip = true;
+    }
+
     System.out.print("Loading training trees (sections 2-21) ... ");
     List<Tree<String>> trainTrees = readTrees(basePath, 200, 2199, maxTrainLength);
     System.out.println("done. (" + trainTrees.size() + " trees)");
@@ -1115,10 +1120,10 @@ public class PCFGParserTester {
 
     Parser parser = new CKYParser(trainTrees);
 
-    testParser(parser, testTrees, verbose);
+    testParser(parser, testTrees, verbose, useSTip);
   }
 
-  private static void testParser(Parser parser, List<Tree<String>> testTrees, boolean verbose) {
+  private static void testParser(Parser parser, List<Tree<String>> testTrees, boolean verbose, boolean useSTip) {
     long start = System.nanoTime();
     EnglishPennTreebankParseEvaluator.LabeledConstituentEval<String> eval = new EnglishPennTreebankParseEvaluator.LabeledConstituentEval<String>(Collections.singleton("ROOT"), new HashSet<String>(Arrays.asList(new String[]{"''", "``", ".", ":", ","})));
     for (int i = 0; i < testTrees.size(); i++) {
@@ -1126,8 +1131,8 @@ public class PCFGParserTester {
       System.out.println("Evaluating sentence " + i + "/" + testTrees.size());
       Tree<String> testTree = testTrees.get(i);
       List<String> testSentence = testTree.getYield();
-      boolean isSTree = testTree.getChildren() != null && testTree.getChildren().size() == 1 && testTree.getChildren().get(0).getLabel() == "S";
-      Tree<String> guessedTree = parser.getBestParse(testSentence, isSTree);
+      boolean isNotSTree = useSTip && !(testTree.getChildren() != null && testTree.getChildren().size() == 1 && testTree.getChildren().get(0).getLabel() == "S");
+      Tree<String> guessedTree = parser.getBestParse(testSentence, isNotSTree);
       if (verbose) {
         long localElapsedNanos = System.nanoTime() - localStart;
         System.out.println("Guess:\n" + Trees.PennTreeRenderer.render(guessedTree));
