@@ -340,12 +340,17 @@ public class PCFGParserTester {
         // Start with a binary
         BinaryTag binary = GetMainRootTagFromBinaryCell(lastCellAsBinaryCell, isSTree);
 
-        // Build the beginning of the tree (always an S followed by something else
-        Tree<String> sTree = new Tree<String>(binary.ResultingTag);
-        rootChildren.add(sTree);
+        if (binary == null){
+          // Return a null tree - don't count the sentences that are not buildable
+          return null;
+        } else {
+          // Build the beginning of the tree
+          Tree<String> sTree = new Tree<String>(binary.ResultingTag);
+          rootChildren.add(sTree);
 
-        // If we're here, it means we'll be able to build a tree. Just watch out for unaries and for the final preterminal transition
-        AddBinaryToTree(lastCellAsBinaryCell, binary, sTree, bottomUpTree);
+          // If we're here, it means we'll be able to build a tree. Just watch out for unaries and for the final preterminal transition
+          AddBinaryToTree(lastCellAsBinaryCell, binary, sTree, bottomUpTree);
+        }
       } else {
         // This has to be a one word sentence
         PreterminalTag preterminal = GetMainRootTagFromPreterminalCell(lastCellAsPreterminal);
@@ -400,8 +405,8 @@ public class PCFGParserTester {
       }
 
       if (maxTag == null){
-        // No probability is a bad case!
-        throw new EmptyStackException();
+        // No probability means the sentence is impossible to build! What to do?
+        return null;
       }
 
       return lastCell.Binaries.get(maxTag);
@@ -1243,7 +1248,9 @@ public class PCFGParserTester {
     }
     System.out.println("done. (" + testTrees.size() + " trees)");
 
+
     Parser parser = new CKYParser(trainTrees, useSTip, horizontalMarkov, verticalMarkov);
+    // Parser parser = new BaselineParser(trainTrees);
 
     testParser(parser, testTrees, verbose);
   }
@@ -1252,6 +1259,7 @@ public class PCFGParserTester {
     long start = System.nanoTime();
     EnglishPennTreebankParseEvaluator.LabeledConstituentEval<String> eval = new EnglishPennTreebankParseEvaluator.LabeledConstituentEval<String>(Collections.singleton("ROOT"), new HashSet<String>(Arrays.asList(new String[]{"''", "``", ".", ":", ","})));
     int totalSentences = 0;
+    int skippedSentences = 0;
     for (int i = 0; i < testTrees.size(); i++) {
       totalSentences++;
       long localStart = System.nanoTime();
@@ -1260,6 +1268,17 @@ public class PCFGParserTester {
       List<String> testSentence = testTree.getYield();
       boolean isSTree = (testTree.getChildren() != null && testTree.getChildren().size() == 1 && testTree.getChildren().get(0).getLabel() == "S");
       Tree<String> guessedTree = parser.getBestParse(testSentence, isSTree);
+
+      long nanoTime = System.nanoTime();
+      long localElapsedNanos = nanoTime - localStart;
+      long totalEllapsedNanos = nanoTime - start;
+      System.out.println("Sentence processing MS: " + (localElapsedNanos / 1000000) + ". Average " + 1.0 * totalEllapsedNanos / 1000000 / totalSentences);
+
+      if (guessedTree == null){
+        System.out.println("Skipping sentence " + i + "/" + testTrees.size() + " since it was impossible to build.");
+        skippedSentences++;
+        continue;
+      }
 
       // Optionally print out the full trees
       if (verbose) {
@@ -1270,16 +1289,13 @@ public class PCFGParserTester {
         System.out.println("Gold:\n" + Trees.PennTreeRenderer.render(testTree));
       }
 
-      long nanoTime = System.nanoTime();
-      long localElapsedNanos = nanoTime - localStart;
-      long totalEllapsedNanos = nanoTime - start;
-      System.out.println("Sentence processing MS: " + (localElapsedNanos / 1000000) + ". Average " + 1.0 * totalEllapsedNanos / 1000000 / totalSentences);
       eval.evaluate(guessedTree, testTree);
       eval.display(true);
     }
     long elapsedNanos = System.nanoTime() - start;
     System.out.println("Ellapsed MS: " + (elapsedNanos / 1000000));
     System.out.println("Average processing time per sentence: " + (1.0 * elapsedNanos / 1000000 / testTrees.size()));
+    System.out.println("Skipped sentences : " + skippedSentences);
     eval.display(true);
   }
 
