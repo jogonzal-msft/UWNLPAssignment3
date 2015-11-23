@@ -406,12 +406,13 @@ public class PCFGParserTester {
 
       while (binary.IsUnary){
         // Add as a unary - loop until we hit a non-unary
+        String realTag = cell.BackPointers.get(binary.ResultingTag);
+        binary = cell.Binaries.get(realTag);
+
         Tree<String> unaryTree = new Tree<String>(binary.ResultingTag);
         currentChildren.add(unaryTree);
         currentChildren = new ArrayList<Tree<String>>();
         unaryTree.setChildren(currentChildren);
-        String realTag = cell.BackPointers.get(binary.ResultingTag);
-        binary = cell.Binaries.get(realTag);
       }
 
       // Now that it's not a unary, we can create a tree for the binary
