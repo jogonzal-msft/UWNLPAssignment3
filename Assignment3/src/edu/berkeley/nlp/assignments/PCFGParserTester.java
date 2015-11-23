@@ -174,13 +174,13 @@ public class PCFGParserTester {
     }
   }
 
-  static class Binary{
+  static class BinaryTag{
     public String ResultingTag;
     public TagWithPosition TagLeft;
     public TagWithPosition TagRight;
     public Double Probability;
     public boolean IsUnary = false;
-    public Binary(String resultingTag, TagWithPosition tagLeft, TagWithPosition tagRight, double probability){
+    public BinaryTag(String resultingTag, TagWithPosition tagLeft, TagWithPosition tagRight, double probability){
       ResultingTag = resultingTag;
       TagLeft = tagLeft;
       TagRight = tagRight;
@@ -235,8 +235,8 @@ public class PCFGParserTester {
   }
 
   static class BinaryCell extends Cell{
-    public Map<String, Binary> Binaries;
-    public BinaryCell(Map<String, Binary> binaries, Integer row, Integer column){
+    public Map<String, BinaryTag> Binaries;
+    public BinaryCell(Map<String, BinaryTag> binaries, Integer row, Integer column){
       super(row, column);
       Binaries = binaries;
     }
@@ -248,7 +248,7 @@ public class PCFGParserTester {
 
     @Override
     public double GetScore(String tag) {
-      Binary binary = Binaries.getOrDefault(tag, null);
+      BinaryTag binary = Binaries.getOrDefault(tag, null);
       if (binary != null){
         return binary.Probability;
       }
@@ -258,7 +258,7 @@ public class PCFGParserTester {
     @Override
     public void AddUnaryClosure(String parent, double probability) {
       // Add a fake binary
-      Binary fakeBinary = new Binary(parent, null, null, probability);
+      BinaryTag fakeBinary = new BinaryTag(parent, null, null, probability);
       fakeBinary.IsUnary = true;
       Binaries.put(parent, fakeBinary);
     }
@@ -282,7 +282,7 @@ public class PCFGParserTester {
       // Build the preterminal tags
       List<PreterminalCell> preterminalCells = getPreterminalTags(sentence);
       // Do unary rules to find extra possible tags
-      AddUnaryRulesToPreterminalCells(preterminalCells);
+      AddUnaryClosuresToPreterminalCells(preterminalCells);
 
       Cell[][] bottomUpTree = new Cell[sentence.size()][sentence.size()];
       int counterForFillingPreterminalCells = 0;
@@ -301,7 +301,7 @@ public class PCFGParserTester {
           int cellRow = cellIndex;
           int cellColumn = cellLevelIndex + cellIndex;
 
-          HashMap<String, Binary> binariesForCell = new HashMap<String, Binary>();
+          HashMap<String, BinaryTag> binariesForCell = new HashMap<String, BinaryTag>();
 
           for(int split = 0; split < cellLevelIndex; split++){
             int leftCellRow = cellRow;
@@ -318,7 +318,7 @@ public class PCFGParserTester {
 
           // At this point, binariesForCell contains all the possible binaries. We need to unary closure them, then write the cell
           BinaryCell binaryCell = new BinaryCell(binariesForCell, cellRow, cellColumn);
-          AddUnaryRulesForCell(binaryCell);
+          AddUnaryClosuresForCell(binaryCell);
           bottomUpTree[cellRow][cellColumn] = binaryCell;
         }
       }
@@ -333,7 +333,7 @@ public class PCFGParserTester {
       PreterminalCell lastCellAsPreterminal = as(PreterminalCell.class, bottomUpTree[0][sentence.size() - 1]);
       if (lastCellAsBinaryCell != null){
         // Start with a binary
-        Binary binary = GetMainRootTagFromBinaryCell(lastCellAsBinaryCell, isNotSTree);
+        BinaryTag binary = GetMainRootTagFromBinaryCell(lastCellAsBinaryCell, isNotSTree);
 
         // Build the beginning of the tree (always an S followed by something else
         Tree<String> sTree = new Tree<String>(binary.ResultingTag);
@@ -370,7 +370,7 @@ public class PCFGParserTester {
       return lastCellAsPreterminal.Preterminals.get(maxTag);
     }
 
-    private Binary GetMainRootTagFromBinaryCell(BinaryCell lastCell, boolean isNotSTree) {
+    private BinaryTag GetMainRootTagFromBinaryCell(BinaryCell lastCell, boolean isNotSTree) {
       if (!isNotSTree){
         // The test tree starts with S - get the S!
         if (lastCell.GetScore("S") > 0){
@@ -400,7 +400,7 @@ public class PCFGParserTester {
       return lastCell.Binaries.get(maxTag);
     }
 
-    private void AddBinaryToTree(BinaryCell cell, Binary binary, Tree<String> currentTree, Cell[][] bottomUpTree) {
+    private void AddBinaryToTree(BinaryCell cell, BinaryTag binary, Tree<String> currentTree, Cell[][] bottomUpTree) {
       List<Tree<String>> currentChildren = new ArrayList<Tree<String>>();
       currentTree.setChildren(currentChildren);
 
@@ -437,7 +437,7 @@ public class PCFGParserTester {
       PreterminalCell preterminalCell = as(PreterminalCell.class, cell);
 
       if (binaryCell != null){
-        Binary binary = binaryCell.Binaries.get(tag);
+        BinaryTag binary = binaryCell.Binaries.get(tag);
         AddBinaryToTree(binaryCell, binary, tree, bottomUpTree);
       }
       else if (preterminalCell != null){
@@ -466,7 +466,7 @@ public class PCFGParserTester {
       currentChildren.add(terminalTree);
     }
 
-    private void AddBinariesForCellCombination(Cell leftCell, Cell rightCell, HashMap<String, Binary> binariesForCell) {
+    private void AddBinariesForCellCombination(Cell leftCell, Cell rightCell, HashMap<String, BinaryTag> binariesForCell) {
       // Get all combinations of possible grammars between left and right
       Set<String> leftTags = leftCell.GetTags();
 
@@ -479,11 +479,11 @@ public class PCFGParserTester {
             double probability = binaryRule.getScore() * leftScore * rightScore;
             // Add the binary combination
             // Check if the combination existed. If not, then add it. If yes, add it if it has a better score
-            Binary existingBinary = binariesForCell.getOrDefault(binaryRule.getParent(), null);
+            BinaryTag existingBinary = binariesForCell.getOrDefault(binaryRule.getParent(), null);
             if (existingBinary == null || existingBinary.Probability < probability){
               binariesForCell.put(
                       binaryRule.getParent(),
-                      new Binary(binaryRule.getParent(),
+                      new BinaryTag(binaryRule.getParent(),
                               new TagWithPosition(binaryRule.getLeftChild(), new Position(leftCell.Row, leftCell.Column)),
                               new TagWithPosition(binaryRule.getRightChild(), new Position(rightCell.Row, rightCell.Column)),
                               probability));
@@ -493,15 +493,15 @@ public class PCFGParserTester {
       }
     }
 
-    private void AddUnaryRulesToPreterminalCells(List<PreterminalCell> preterminalCells) {
+    private void AddUnaryClosuresToPreterminalCells(List<PreterminalCell> preterminalCells) {
       System.out.println("Building unaries for first level");
 
       for(Cell cell : preterminalCells){
-        AddUnaryRulesForCell(cell);
+        AddUnaryClosuresForCell(cell);
       }
     }
 
-    private void AddUnaryRulesForCell(Cell cell) {
+    private void AddUnaryClosuresForCell(Cell cell) {
       boolean added = true;
       while(added){
         added = false;
@@ -1102,7 +1102,10 @@ public class PCFGParserTester {
     }
 
     if (argMap.containsKey("-stip")) {
+      System.out.println("Running with Stip.");
       useSTip = true;
+    } else {
+      System.out.println("Running without Stip.");
     }
 
     System.out.print("Loading training trees (sections 2-21) ... ");
@@ -1133,12 +1136,15 @@ public class PCFGParserTester {
       List<String> testSentence = testTree.getYield();
       boolean isNotSTree = useSTip && !(testTree.getChildren() != null && testTree.getChildren().size() == 1 && testTree.getChildren().get(0).getLabel() == "S");
       Tree<String> guessedTree = parser.getBestParse(testSentence, isNotSTree);
+
+      // Optionally print out the full trees
       if (verbose) {
-        long localElapsedNanos = System.nanoTime() - localStart;
         System.out.println("Guess:\n" + Trees.PennTreeRenderer.render(guessedTree));
         System.out.println("Gold:\n" + Trees.PennTreeRenderer.render(testTree));
-        System.out.println("Sentence processing MS: " + (localElapsedNanos / 1000000));
       }
+
+      long localElapsedNanos = System.nanoTime() - localStart;
+      System.out.println("Sentence processing MS: " + (localElapsedNanos / 1000000));
       eval.evaluate(guessedTree, testTree);
       eval.display(true);
     }
