@@ -7,7 +7,7 @@ public class Main {
         Test<MockClass> test = new Test<MockClass>();
         test.main(new String[]{
                 "-test",
-                "-maxTrainLength", "99",
+                "-maxTrainLength", "1000",
                 "-maxTestLength", "40",
                 "-usestip",
                 "-quiet",
