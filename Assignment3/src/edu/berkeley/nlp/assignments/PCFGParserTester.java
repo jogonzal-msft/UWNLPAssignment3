@@ -279,7 +279,7 @@ public class PCFGParserTester {
 
       // First row of the tree (bottom up)
       // Build the preterminal tags
-      List<PreterminalCell> preterminalCells = getBaselineTagging(sentence);
+      List<PreterminalCell> preterminalCells = getPreterminalTags(sentence);
       // Do unary rules to find extra possible tags
       AddUnaryRulesToPreterminalCells(preterminalCells);
 
@@ -322,21 +322,79 @@ public class PCFGParserTester {
         }
       }
 
-      // Pick the biggest "S" at the beginning
-      int expectedBinaryLevels = sentence.size() - 1;
-      BinaryCell lastCell = (BinaryCell)bottomUpTree[0][expectedBinaryLevels];
+      // Start the tree at root
       Tree<String> annotatedBestParse = new Tree<String>("ROOT", null);
-      if (lastCell.GetScore("S") > 0){
+      List<Tree<String>> rootChildren = new ArrayList<Tree<String>>();
+      annotatedBestParse.setChildren(rootChildren);
+
+      // Pick the beginning tag
+      BinaryCell lastCellAsBinaryCell = as(BinaryCell.class, bottomUpTree[0][sentence.size() - 1]);
+      PreterminalCell lastCellAsPreterminal = as(PreterminalCell.class, bottomUpTree[0][sentence.size() - 1]);
+      if (lastCellAsBinaryCell != null){
+        // Start with a binary
+        Binary binary = GetMainRootTagFromBinaryCell(lastCellAsBinaryCell);
+
+        // Build the beginning of the tree (always an S followed by something else
+        Tree<String> sTree = new Tree<String>(binary.ResultingTag);
+        rootChildren.add(sTree);
+
         // If we're here, it means we'll be able to build a tree. Just watch out for unaries and for the final preterminal transition
-        Binary binary = lastCell.Binaries.get("S");
-        Tree<String> currentTree = annotatedBestParse;
-        AddBinaryToTree(lastCell, binary, currentTree, bottomUpTree);
+        AddBinaryToTree(lastCellAsBinaryCell, binary, sTree, bottomUpTree);
       } else {
-        // This means something went wront and we weren't able to find any viable parse for this tree
+        // This has to be a one word sentence
+        PreterminalTag preterminal = GetMainRootTagFromPreterminalCell(lastCellAsPreterminal);
+        Tree<String> sTree = new Tree<String>(preterminal.Tag);
+        rootChildren.add(sTree);
+        AddPreterminalToTree(lastCellAsPreterminal, sTree, bottomUpTree, preterminal);
+      }
+      return TreeAnnotations.unAnnotateTree(annotatedBestParse);
+    }
+
+    private PreterminalTag GetMainRootTagFromPreterminalCell(PreterminalCell lastCellAsPreterminal) {
+      double maxProbability = 0;
+      String maxTag = null;
+      for(String tag : lastCellAsPreterminal.GetTags()){
+        double probability = lastCellAsPreterminal.GetScore(tag);
+        if (probability > maxProbability){
+          maxTag = tag;
+          maxProbability = probability;
+        }
+      }
+
+      if (maxTag == null){
+        // No tag is a weird case!
         throw new EmptyStackException();
       }
 
-      return TreeAnnotations.unAnnotateTree(annotatedBestParse);
+      return lastCellAsPreterminal.Preterminals.get(maxTag);
+    }
+
+    private Binary GetMainRootTagFromBinaryCell(BinaryCell lastCell) {
+      // Normally you could start with S, but we're going to pick the most likely one instead
+      if (lastCell.GetScore("S") > 0){
+        return lastCell.Binaries.get("S");
+      }
+
+      // No S is a weird case!
+      throw new EmptyStackException();
+
+
+      /*double maxProbability = 0;
+      String maxTag = null;
+      for(String tag : lastCell.GetTags()){
+        double currentProbability = lastCell.GetScore(tag);
+        if (currentProbability > maxProbability){
+          maxTag = tag;
+          maxProbability = currentProbability;
+        }
+      }
+
+      if (maxTag == null){
+        // No probability is a bad case!
+        throw new EmptyStackException();
+      }
+
+      return lastCell.Binaries.get(maxTag);*/
     }
 
     private void AddBinaryToTree(BinaryCell cell, Binary binary, Tree<String> currentTree, Cell[][] bottomUpTree) {
@@ -355,7 +413,7 @@ public class PCFGParserTester {
 
       // Now that it's not a unary, we can create a tree for the binary
       Tree<String> binaryTreeLeft = new Tree<String>(binary.TagLeft.Tag);
-      Tree<String> binaryTreeRight = new Tree<String>(binary.TagLeft.Tag);
+      Tree<String> binaryTreeRight = new Tree<String>(binary.TagRight.Tag);
       currentChildren.add(binaryTreeLeft);
       currentChildren.add(binaryTreeRight);
 
@@ -391,23 +449,18 @@ public class PCFGParserTester {
 
       while (preterminalTag.IsUnary){
         // Add as a unary - loop until we hit a non-unary
+        String realTag = cell.BackPointers.get(preterminalTag.Tag);
+        preterminalTag = cell.Preterminals.get(realTag);
+
         Tree<String> unaryTree = new Tree<String>(preterminalTag.Tag);
         currentChildren.add(unaryTree);
         currentChildren = new ArrayList<Tree<String>>();
         unaryTree.setChildren(currentChildren);
-        String realTag = cell.BackPointers.get(preterminalTag.Tag);
-        preterminalTag = cell.Preterminals.get(realTag);
       }
 
-      // Now that it's not a unary, we can create a tree for the preterminal
-      Tree<String> preterminalTree = new Tree<String>(preterminalTag.Tag);
-      currentChildren.add(preterminalTree);
-
-      // Add the terminal tree
+      // Now that it's not a unary, we can add the word
       Tree<String> terminalTree = new Tree<String>(preterminalTag.Word);
-      currentChildren = new ArrayList<Tree<String>>();
       currentChildren.add(terminalTree);
-      preterminalTree.setChildren(currentChildren);
     }
 
     private void AddBinariesForCellCombination(Cell leftCell, Cell rightCell, HashMap<String, Binary> binariesForCell) {
@@ -467,7 +520,7 @@ public class PCFGParserTester {
       }
     }
 
-    private List<PreterminalCell> getBaselineTagging(List<String> sentence) {
+    private List<PreterminalCell> getPreterminalTags(List<String> sentence) {
       List<PreterminalCell> preterminalCells = new ArrayList<PreterminalCell>();
       int wordIndex = 0;
       for (String word : sentence) {
@@ -475,7 +528,6 @@ public class PCFGParserTester {
         preterminalCells.add(new PreterminalCell(preterminalTagsForWord, wordIndex, wordIndex));
         wordIndex++;
       }
-      // Todo - unaries using unary closures!
       return preterminalCells;
     }
 
@@ -507,8 +559,6 @@ public class PCFGParserTester {
       System.out.print("Keeping grammar and setting up a CKY parser ... ");
       lexicon = new Lexicon(annotatedTrainTrees);
 
-      // Initialize dictionary variables
-      // TODO I will need some variables here, of course?
       System.out.println("done initializing parser.");
     }
 
@@ -1047,8 +1097,8 @@ public class PCFGParserTester {
       verbose = false;
     }
 
-    System.out.print("Loading training trees (sections 2-10) ... ");
-    List<Tree<String>> trainTrees = readTrees(basePath, 200, 999, maxTrainLength);
+    System.out.print("Loading training trees (sections 2-21) ... ");
+    List<Tree<String>> trainTrees = readTrees(basePath, 200, 2199, maxTrainLength);
     System.out.println("done. (" + trainTrees.size() + " trees)");
     List<Tree<String>> testTrees = null;
     if (testMode.equalsIgnoreCase("validate")) {
