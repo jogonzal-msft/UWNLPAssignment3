@@ -20,7 +20,7 @@ public class PCFGParserTester {
    * Parsers are required to map sentences to trees.  How a parser is constructed and trained is not specified.
    */
   static interface Parser {
-    Tree<String> getBestParse(List<String> sentence, boolean isNotSTree);
+    Tree<String> getBestParse(List<String> sentence, boolean isSTree);
   }
 
   /**
@@ -33,7 +33,7 @@ public class PCFGParserTester {
     CounterMap<Integer, String> spanToCategories;
     Lexicon lexicon;
 
-    public Tree<String> getBestParse(List<String> sentence, boolean isNotSTree) {
+    public Tree<String> getBestParse(List<String> sentence, boolean isSTree) {
       List<String> tags = getBaselineTagging(sentence);
       Tree<String> annotatedBestParse = null;
       if (knownParses.keySet().contains(tags)) {
@@ -274,7 +274,12 @@ public class PCFGParserTester {
     Grammar grammar;
     UnaryClosure unaryClosures;
 
-    public Tree<String> getBestParse(List<String> sentence, boolean isNotSTree) {
+    // Configs
+    boolean _useSTip;
+    boolean _verticalMarkov;
+    boolean _horizontalMarkov;
+
+    public Tree<String> getBestParse(List<String> sentence, boolean isSTree) {
       System.out.println("=====================================================================");
       System.out.println("GetBestParse for " + sentence.size() + " word sentence");
 
@@ -333,7 +338,7 @@ public class PCFGParserTester {
       PreterminalCell lastCellAsPreterminal = as(PreterminalCell.class, bottomUpTree[0][sentence.size() - 1]);
       if (lastCellAsBinaryCell != null){
         // Start with a binary
-        BinaryTag binary = GetMainRootTagFromBinaryCell(lastCellAsBinaryCell, isNotSTree);
+        BinaryTag binary = GetMainRootTagFromBinaryCell(lastCellAsBinaryCell, isSTree);
 
         // Build the beginning of the tree (always an S followed by something else
         Tree<String> sTree = new Tree<String>(binary.ResultingTag);
@@ -348,7 +353,7 @@ public class PCFGParserTester {
         rootChildren.add(sTree);
         AddPreterminalToTree(lastCellAsPreterminal, sTree, bottomUpTree, preterminal);
       }
-      return TreeAnnotations.unAnnotateTree(annotatedBestParse);
+      return TreeAnnotationsMarkov.unAnnotateTree(annotatedBestParse);
     }
 
     private PreterminalTag GetMainRootTagFromPreterminalCell(PreterminalCell lastCellAsPreterminal) {
@@ -370,15 +375,17 @@ public class PCFGParserTester {
       return lastCellAsPreterminal.Preterminals.get(maxTag);
     }
 
-    private BinaryTag GetMainRootTagFromBinaryCell(BinaryCell lastCell, boolean isNotSTree) {
-      if (!isNotSTree){
+    private BinaryTag GetMainRootTagFromBinaryCell(BinaryCell lastCell, boolean isSTree) {
+      if (_useSTip && isSTree){
         // The test tree starts with S - get the S!
         if (lastCell.GetScore("S") > 0){
           return lastCell.Binaries.get("S");
         }
 
-        // No S is a weird case!
-        throw new EmptyStackException();
+        // Handle vertical/horizontal markov
+        if (lastCell.GetScore("S=ROOT") > 0){
+          return lastCell.Binaries.get("S=ROOT");
+        }
       }
 
       // Normally you could start with S, but we're going to pick the most likely one instead (since the test tree does not start with S)
@@ -546,7 +553,10 @@ public class PCFGParserTester {
       return preterminalTags;
     }
 
-    public CKYParser(List<Tree<String>> trainTrees) {
+    public CKYParser(List<Tree<String>> trainTrees, boolean useSTip, boolean horizontalMarkov, boolean verticalMarkov) {
+      _useSTip = useSTip;
+      _verticalMarkov = verticalMarkov;
+      _horizontalMarkov = horizontalMarkov;
 
       System.out.print("Annotating / binarizing training trees ... ");
       List<Tree<String>> annotatedTrainTrees = annotateTrees(trainTrees);
@@ -558,7 +568,7 @@ public class PCFGParserTester {
 
       // Unary closures is what we'll check to get unary transitions
       unaryClosures = new UnaryClosure(grammar);
-      System.out.println(unaryClosures);
+      // System.out.println(unaryClosures);
 
       System.out.print("Keeping grammar and setting up a CKY parser ... ");
       lexicon = new Lexicon(annotatedTrainTrees);
@@ -570,7 +580,7 @@ public class PCFGParserTester {
     private List<Tree<String>> annotateTrees(List<Tree<String>> trees) {
       List<Tree<String>> annotatedTrees = new ArrayList<Tree<String>>();
       for (Tree<String> tree : trees) {
-        annotatedTrees.add(TreeAnnotations.annotateTree(tree));
+        annotatedTrees.add(TreeAnnotationsMarkov.annotateTree(tree, _horizontalMarkov, _verticalMarkov));
       }
       return annotatedTrees;
     }
@@ -622,6 +632,101 @@ public class PCFGParserTester {
         }
       });
       Tree<String> unAnnotatedTree = (new Trees.FunctionNodeStripper()).transformTree(debinarizedTree);
+      return unAnnotatedTree;
+    }
+  }
+
+  /**
+   * Class which contains code for annotating and binarizing trees for the parser's use, and debinarizing and
+   * unannotating them for scoring.
+   */
+  static class TreeAnnotationsMarkov {
+    public static Tree<String> annotateTree(Tree<String> unAnnotatedTree, boolean horizontalMarkov, boolean verticalMarkov) {
+      // Currently, the only annotation done is a lossless binarization
+
+      // System.out.println("Before:\n" + Trees.PennTreeRenderer.render(unAnnotatedTree));
+
+      if (verticalMarkov){
+        VerticalMarkov(unAnnotatedTree, null);
+      }
+
+      if (horizontalMarkov){
+        HorizontalMarkov(unAnnotatedTree);
+      }
+
+      // System.out.println("After:\n" + Trees.PennTreeRenderer.render(unAnnotatedTree));
+
+      return binarizeTree(unAnnotatedTree);
+    }
+
+    private static void HorizontalMarkov(Tree<String> unAnnotatedTree) {
+      if (unAnnotatedTree.isPreTerminal()){
+        return;
+      }
+
+      String siblingTag = null;
+      for(Tree<String> tree : unAnnotatedTree.getChildren()){
+        String label = tree.getLabel();
+        if (siblingTag != null){
+          tree.setLabel(label + "-" + siblingTag);
+        }
+        siblingTag = label;
+        HorizontalMarkov(tree);
+      }
+    }
+
+    private static void VerticalMarkov(Tree<String> unAnnotatedTree, String parentTag) {
+
+      if (unAnnotatedTree.isLeaf()){
+        return;
+      }
+
+      String label = unAnnotatedTree.getLabel();
+      if (parentTag != null){
+        unAnnotatedTree.setLabel(label + "=" + parentTag);
+      }
+      for(Tree<String> tree : unAnnotatedTree.getChildren()){
+        VerticalMarkov(tree, label);
+      }
+    }
+
+    private static Tree<String> binarizeTree(Tree<String> tree) {
+      String label = tree.getLabel();
+      // Do vertical markov
+      String markovLabel = tree.getLabel();
+      if (tree.isLeaf())
+        return new Tree<String>(markovLabel);
+      if (tree.getChildren().size() == 1) {
+        return new Tree<String>(markovLabel, Collections.singletonList(binarizeTree(tree.getChildren().get(0))));
+      }
+      // otherwise, it's a binary-or-more local tree, so decompose it into a sequence of binary and unary trees.
+      String intermediateLabel = "@" + markovLabel + "->";
+      Tree<String> intermediateTree = binarizeTreeHelper(tree, 0, intermediateLabel);
+      return new Tree<String>(markovLabel, intermediateTree.getChildren());
+    }
+
+    private static Tree<String> binarizeTreeHelper(Tree<String> tree, int numChildrenGenerated, String intermediateLabel) {
+      Tree<String> leftTree = tree.getChildren().get(numChildrenGenerated);
+      List<Tree<String>> children = new ArrayList<Tree<String>>();
+      children.add(binarizeTree(leftTree));
+      if (numChildrenGenerated < tree.getChildren().size() - 1) {
+        Tree<String> rightTree = binarizeTreeHelper(tree, numChildrenGenerated + 1, intermediateLabel + "_" + leftTree.getLabel());
+        children.add(rightTree);
+      }
+      return new Tree<String>(intermediateLabel, children);
+    }
+
+    public static Tree<String> unAnnotateTree(Tree<String> annotatedTree) {
+      // Remove intermediate nodes (labels beginning with "@"
+      // Remove all material on node labels which follow their base symbol (cuts at the leftmost -, ^, or : character)
+      // Examples: a node with label @NP->DT_JJ will be spliced out, and a node with label NP^S will be reduced to NP
+      Tree<String> debinarizedTree = Trees.spliceNodes(annotatedTree, new Filter<String>() {
+        public boolean accept(String s) {
+          return s.startsWith("@");
+        }
+      });
+      Tree<String> unAnnotatedTree = (new Trees.FunctionNodeStripper()).transformTree(debinarizedTree);
+      //AntiVerticalMarkov(unAnnotatedTree);
       return unAnnotatedTree;
     }
   }
@@ -1075,6 +1180,8 @@ public class PCFGParserTester {
     int maxTrainLength = 1000;
     int maxTestLength = 40;
     boolean useSTip = false;
+    boolean verticalMarkov = false;
+    boolean horizontalMarkov = false;
 
     // Update defaults using command line specifications
     if (argMap.containsKey("-path")) {
@@ -1102,11 +1209,25 @@ public class PCFGParserTester {
       verbose = false;
     }
 
-    if (argMap.containsKey("-stip")) {
-      System.out.println("Running with Stip.");
+    if (argMap.containsKey("-usestip")) {
+      System.out.println("Running with usestip.");
       useSTip = true;
     } else {
-      System.out.println("Running without Stip.");
+      System.out.println("Running without usestip.");
+    }
+
+    if (argMap.containsKey("-horizontalmarkov")) {
+      System.out.println("Running with horizontal markov.");
+      horizontalMarkov = true;
+    } else {
+      System.out.println("Running without horizontalmarkov.");
+    }
+
+    if (argMap.containsKey("-verticalmarkov")) {
+      System.out.println("Running with verticalmarkov.");
+      verticalMarkov = true;
+    } else {
+      System.out.println("Running without verticalmarkov.");
     }
 
     System.out.print("Loading training trees (sections 2-21) ... ");
@@ -1122,35 +1243,43 @@ public class PCFGParserTester {
     }
     System.out.println("done. (" + testTrees.size() + " trees)");
 
-    Parser parser = new CKYParser(trainTrees);
+    Parser parser = new CKYParser(trainTrees, useSTip, horizontalMarkov, verticalMarkov);
 
-    testParser(parser, testTrees, verbose, useSTip);
+    testParser(parser, testTrees, verbose);
   }
 
-  private static void testParser(Parser parser, List<Tree<String>> testTrees, boolean verbose, boolean useSTip) {
+  private static void testParser(Parser parser, List<Tree<String>> testTrees, boolean verbose) {
     long start = System.nanoTime();
     EnglishPennTreebankParseEvaluator.LabeledConstituentEval<String> eval = new EnglishPennTreebankParseEvaluator.LabeledConstituentEval<String>(Collections.singleton("ROOT"), new HashSet<String>(Arrays.asList(new String[]{"''", "``", ".", ":", ","})));
+    int totalSentences = 0;
     for (int i = 0; i < testTrees.size(); i++) {
+      totalSentences++;
       long localStart = System.nanoTime();
       System.out.println("Evaluating sentence " + i + "/" + testTrees.size());
       Tree<String> testTree = testTrees.get(i);
       List<String> testSentence = testTree.getYield();
-      boolean isNotSTree = useSTip && !(testTree.getChildren() != null && testTree.getChildren().size() == 1 && testTree.getChildren().get(0).getLabel() == "S");
-      Tree<String> guessedTree = parser.getBestParse(testSentence, isNotSTree);
+      boolean isSTree = (testTree.getChildren() != null && testTree.getChildren().size() == 1 && testTree.getChildren().get(0).getLabel() == "S");
+      Tree<String> guessedTree = parser.getBestParse(testSentence, isSTree);
 
       // Optionally print out the full trees
       if (verbose) {
+        String linearSentence = String.join(" ", testSentence);
+        System.out.println("Sentence:\n\t" + linearSentence);
+
         System.out.println("Guess:\n" + Trees.PennTreeRenderer.render(guessedTree));
         System.out.println("Gold:\n" + Trees.PennTreeRenderer.render(testTree));
       }
 
-      long localElapsedNanos = System.nanoTime() - localStart;
-      System.out.println("Sentence processing MS: " + (localElapsedNanos / 1000000));
+      long nanoTime = System.nanoTime();
+      long localElapsedNanos = nanoTime - localStart;
+      long totalEllapsedNanos = nanoTime - start;
+      System.out.println("Sentence processing MS: " + (localElapsedNanos / 1000000) + ". Average " + 1.0 * totalEllapsedNanos / 1000000 / totalSentences);
       eval.evaluate(guessedTree, testTree);
       eval.display(true);
     }
     long elapsedNanos = System.nanoTime() - start;
     System.out.println("Ellapsed MS: " + (elapsedNanos / 1000000));
+    System.out.println("Average processing time per sentence: " + (1.0 * elapsedNanos / 1000000 / testTrees.size()));
     eval.display(true);
   }
 
